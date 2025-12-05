@@ -141,7 +141,6 @@ cryptography>=3.4.0
 
 ### Контактна інформація
 - **Автор**: Петренко Тарас Сергійович
-- **Ліцензія**: © 2024 Всі права захищено
 
 ### Технічна документація
 - **Архітектура**: Настільна програма на основі PyQt6
@@ -150,9 +149,34 @@ cryptography>=3.4.0
 
 ---
 
-## 📄 License
+## 📄 Ліцензія
 
-© 2024 Petrenko Taras Sergiyovich
-Всі права захищено / All rights reserved
+Copyright 2024 Petrenko Taras Sergiyovich
 
-Ця програма є інтелектуальною власністю автора.
+Ліцензіяється під ліцензією Apache, версія 2.0 ("Ліцензія");
+ви не можете використовувати цей файл, крім як відповідно до Ліцензії.
+Копію ліцензії доступне за адресою:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Якщо не застосовується чинне законодавство або письмова згода,
+програмне забезпечення, що розповсюджується під Ліцензією, розповсюджується
+"ЯК Є", БЕЗ ГАРАНТІЙ ТА УМОВ БУДЬ-ЯКОГО ВИДУ, явно чи неявно.
+Див. Ліцензію для конкретної мови, що регулює дозволи та обмеження
+за Ліцензією.
+
+---
+
+## 📄 Apache License 2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
