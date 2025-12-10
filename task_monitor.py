@@ -9,16 +9,13 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QTableWidget, QTableWidgetItem, QMessageBox,
                             QTabWidget, QHeaderView, QCheckBox,
                             QProgressBar, QFileDialog, QToolBar, QSplitter, QDialog, QGroupBox, QGridLayout, QTextEdit, QSizePolicy)
-from PyQt6.QtCore import QMimeData
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings, QUrl
 import hashlib
 import base64
-from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from PyQt6.QtGui import QFont, QColor, QIcon, QPixmap, QDesktopServices, QAction
+from PyQt6.QtGui import QFont, QColor, QAction
 from PyQt6.QtWidgets import QToolButton
-from PyQt6.QtNetwork import QNetworkRequest, QNetworkReply
 from bs4 import BeautifulSoup
 import json
 import hashlib
@@ -28,7 +25,6 @@ import os
 import urllib.parse
 import webbrowser
 import re
-import time
 import pickle
 from pathlib import Path
 
@@ -117,6 +113,11 @@ class TaskTracker:
         for task in current_tasks:
             task_key = self.get_task_key(task)
 
+            # Skip tasks that are 100% complete - they should be archived
+            if task.get('percentage', 0) == 100:
+                print(f"Skipping 100% complete task: {task.get('task_name', 'Unknown')} (key: {task_key})")
+                continue
+
             # Skip if this task was just archived
             if task_key not in self.current_known_tasks:
                 # Check if this task was recently archived (in current session)
@@ -186,34 +187,38 @@ class TaskTracker:
         # Check each current task for 100% completion
         for task in current_tasks:
             task_key = self.get_task_key(task)
-            if task_key in self.current_known_tasks:
-                current_task = self.current_known_tasks[task_key]
-                percentage = current_task.get('percentage', 0)
 
-                # Check if task is 100% complete
-                if percentage == 100:
-                    # Check if this task is already archived with completed reason
-                    already_archived = False
-                    for archive_key, archive_data in self.archived_tasks.items():
-                        if (archive_key.startswith(task_key + '_') and
-                            archive_data.get('archive_reason') == 'completed_100_percent'):
-                            already_archived = True
-                            break
+            # Get the percentage directly from the scraped task data
+            percentage = task.get('percentage', 0)
 
-                    if not already_archived:
-                        # Archive the completed task
-                        archive_key = f"{task_key}_{datetime.now().isoformat()}"
-                        self.archived_tasks[archive_key] = {
-                            'task': current_task.copy(),
-                            'archived_date': datetime.now().isoformat(),
-                            'archive_reason': 'completed_100_percent'
-                        }
-                        # Remove from current tasks
+            # Check if task is 100% complete
+            if percentage == 100:
+                # Check if this task is already archived with completed reason
+                already_archived = False
+                for archive_key, archive_data in self.archived_tasks.items():
+                    if (archive_key.startswith(task_key + '_') and
+                        archive_data.get('archive_reason') == 'completed_100_percent'):
+                        already_archived = True
+                        break
+
+                if not already_archived:
+                    # Get the task data from current_known_tasks if available, otherwise use scraped data
+                    task_data = self.current_known_tasks.get(task_key, task)
+
+                    # Archive the completed task
+                    archive_key = f"{task_key}_{datetime.now().isoformat()}"
+                    self.archived_tasks[archive_key] = {
+                        'task': task_data.copy(),
+                        'archived_date': datetime.now().isoformat(),
+                        'archive_reason': 'completed_100_percent'
+                    }
+                    # Remove from current tasks if it exists
+                    if task_key in self.current_known_tasks:
                         del self.current_known_tasks[task_key]
-                        # Track as recently archived to prevent false new task detection
-                        self.recently_archived_tasks.add(task_key)
-                        newly_archived_count += 1
-                        print(f"Auto-archived completed task: {task.get('task_name', 'Unknown')} (100%)")
+                    # Track as recently archived to prevent false new task detection
+                    self.recently_archived_tasks.add(task_key)
+                    newly_archived_count += 1
+                    print(f"Auto-archived completed task: {task.get('task_name', 'Unknown')} (100%)")
 
         if newly_archived_count > 0:
             self.save_current_tasks()
@@ -496,7 +501,12 @@ class LoginWorker(QThread):
                             if auto_archived_count > 0:
                                 self.tasks_auto_archived.emit(auto_archived_count)
 
-                        self.data_received.emit(tasks)
+                            # Filter out 100% tasks from display
+                            tasks_to_display = [task for task in tasks if task.get('percentage', 0) < 100]
+                        else:
+                            tasks_to_display = tasks
+
+                        self.data_received.emit(tasks_to_display)
                     else:
                         self.login_failed.emit(f"Failed to fetch calendar page: {tasks_response.status_code}")
                 else:
@@ -1183,19 +1193,7 @@ class TaskMonitorApp(QMainWindow):
         details_window = TaskDetailsWindow(task, self.session, self)
         details_window.exec()
 
-    def on_task_double_click_old(self, row, column):
-        """Handle double-click on a task row to download documents"""
-        if not hasattr(self, '_current_tasks') or row >= len(self._current_tasks):
-            return
 
-        task = self._current_tasks[row]
-        documents = task.get('documents', [])
-
-        if documents:
-            self.download_documents_for_task(task['task_name'], documents)
-        else:
-            QMessageBox.information(self, "Документи Відсутні",
-                                   f"Документи не знайдено для завдання:\n{task['task_name']}")
 
     def highlight_row_by_status(self, row, status, task_data=None):
         """Apply color coding and font styling to table rows based on task status"""
@@ -1289,24 +1287,7 @@ class TaskMonitorApp(QMainWindow):
         # Re-run the worker to get fresh data
         self.worker.start()
 
-    def download_document_for_row(self):
-        """Download document for a specific task row"""
-        button = self.sender()
-        task_index = button.property("task_index")
-        task_name = button.property("task_name")
 
-        # Get the task from current data
-        if hasattr(self, '_current_tasks') and task_index < len(self._current_tasks):
-            task = self._current_tasks[task_index]
-            documents = task.get('documents', [])
-
-            if documents:
-                self.download_documents_for_task(task_name, documents)
-            else:
-                QMessageBox.information(self, "Документи Відсутні",
-                                   f"Документи не знайдено для завдання: {task_name}")
-        else:
-            QMessageBox.warning(self, "Error", "Task data not available")
 
     def download_documents_for_task(self, task_name, documents):
         """Download all documents for a specific task"""
@@ -1382,96 +1363,9 @@ class TaskMonitorApp(QMainWindow):
 
         self.statusBar().showMessage("Завантаження завершено")
 
-    def download_all_documents(self):
-        """Download all documents from all tasks"""
-        if not hasattr(self, '_current_tasks') or not self._current_tasks:
-            QMessageBox.warning(self, "Завдань Немає", "Будь ласка, спершу завантажте завдання")
-            return
 
-        all_documents = []
-        total_files = 0
 
-        for task in self._current_tasks:
-            documents = task.get('documents', [])
-            all_documents.extend(documents)
-            total_files += len(documents)
 
-        if total_files == 0:
-            QMessageBox.information(self, "Документи Відсутні", "У жодному завданні не знайдено документів")
-            return
-
-        # Ask for confirmation
-        reply = QMessageBox.question(self, "Підтвердити Завантаження",
-                                 f"Завантажити {total_files} документів з усіх завдань?",
-                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                 QMessageBox.StandardButton.No)
-
-        if reply == QMessageBox.StandardButton.Yes:
-            # Let user choose download location
-            download_dir = QFileDialog.getExistingDirectory(
-                self,
-                "Оберіть папку для завантаження всіх документів",
-                "",
-                QFileDialog.Option.ShowDirsOnly
-            )
-
-            if download_dir:
-                self.download_documents_collection("All Tasks", all_documents, download_dir)
-
-    def download_documents_collection(self, collection_name, documents, download_dir):
-        """Download a collection of documents with progress"""
-        # Show progress bar
-        self.download_progress.setVisible(True)
-        self.download_progress.setMaximum(len(documents))
-        self.download_progress.setValue(0)
-
-        successful_downloads = 0
-
-        for i, doc in enumerate(documents):
-            try:
-                # Update progress
-                self.download_progress.setValue(i)
-                self.statusBar().showMessage(f"Downloading {doc['text']} ({i+1}/{len(documents)})...")
-
-                # Download the document
-                response = self.session.get(doc['url'], timeout=30)
-
-                if response.status_code == 200:
-                    # Extract filename
-                    url_path = urllib.parse.urlparse(doc['url']).path
-                    if url_path:
-                        filename = os.path.basename(url_path)
-                    else:
-                        filename = f"{doc['text']}.pdf"
-
-                    # Clean filename
-                    filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.'))
-
-                    file_path = os.path.join(download_dir, filename)
-
-                    # Save file
-                    with open(file_path, 'wb') as f:
-                        f.write(response.content)
-
-                    successful_downloads += 1
-                else:
-                    failed_downloads += 1
-
-            except Exception as e:
-                failed_downloads += 1
-
-        # Hide progress bar
-        self.download_progress.setVisible(False)
-
-        # Show results
-        if successful_downloads == len(documents):
-            QMessageBox.information(self, "Завантаження Завершено",
-                                       f"Успішно завантажено {successful_downloads} документів для {collection_name}")
-        else:
-            QMessageBox.warning(self, "Часткове Завантаження",
-                                  f"Завантажено {successful_downloads} з {len(documents)} документів для {collection_name}")
-
-        self.statusBar().showMessage("Завантаження завершено")
 
     def show_archive(self):
         """Show task archive window"""
@@ -2243,6 +2137,64 @@ class ArchivedTaskDetailsWindow(QDialog):
                 f"Не вдалося відновити завдання: {message}"
             )
 
+    def generate_share_message(self, task_name, order_info, filename):
+        """Generate a shareable message for messaging apps like Viber/Telegram"""
+        task_data = self.task_data
+        archive_data = self.archive_data
+
+        # Extract task information
+        dates = task_data.get('dates', '')
+        percentage = task_data.get('percentage', 0)
+        description = task_data.get('task_description', '')
+        task_id = task_data.get('task_id', '')
+        archived_date = archive_data.get('archived_date', '')
+
+        # For archived tasks, always show as completed or include archive info
+        status = "✅ Завершено (в архіві)"
+
+        # Clean description
+        clean_desc = description.replace('<br>', '\n').replace('<br/>', '\n').replace('&nbsp;', ' ') if description else ''
+
+        # Parse dates to get start and end date
+        start_date = ""
+        end_date = ""
+        if ' - ' in dates:
+            start_date, end_date = dates.split(' - ', 1)
+
+        # Create the calendar link
+        link = f"https://calendar.nupp.edu.ua/index.php?task={task_id}" if task_id else ""
+
+        # Build share message
+        message_parts = []
+        message_parts.append(f"📋 {task_name}")
+        message_parts.append(f"")
+        message_parts.append(f"📅 Терміни виконання: {dates}")
+        message_parts.append(f"📊 Статус: {status}")
+        message_parts.append(f"📁 Дата архівації: {archived_date[:10] if archived_date else 'Невідомо'}")
+
+        # Add order info if available
+        if order_info:
+            message_parts.append(f"📄 {order_info}")
+
+        # Add description if available
+        if clean_desc:
+            # Limit description length
+            if len(clean_desc) > 200:
+                clean_desc = clean_desc[:200] + "..."
+            message_parts.append(f"📝 Опис: {clean_desc}")
+
+        # Add link
+        if link:
+            message_parts.append(f"")
+            message_parts.append(f"🔗 Посилання: {link}")
+
+        # Add footer
+        message_parts.append("")
+        message_parts.append("---")
+        message_parts.append(f"📎 Документи: {filename}")
+
+        return "\n".join(message_parts)
+
     def download_and_share_action(self):
         """Handle download and share button click for ArchivedTaskDetailsWindow"""
         documents = self.task_data.get('documents', [])
@@ -2349,121 +2301,46 @@ class ArchivedTaskDetailsWindow(QDialog):
 
     def share_to_messenger(self, messenger, message, filename, documents):
         """Share message and files to Viber or Telegram automatically"""
-        import subprocess
-        import platform
-        import os
         import webbrowser
+        import urllib.parse
+        import os
         from PyQt6.QtWidgets import QMessageBox
-        from PyQt6.QtGui import QClipboard, QGuiApplication
-        from PyQt6.QtCore import QTimer
+        from PyQt6.QtGui import QGuiApplication
 
-        try:
-            # Copy message to clipboard first
-            clipboard = QGuiApplication.clipboard()
-            clipboard.setText(message)
+        # URL-encode the message for use in the URL
+        encoded_message = urllib.parse.quote(message)
 
-            # Get the download directory
-            download_dir = os.path.expanduser("~/Downloads")  # Default download directory
+        # Get the download directory
+        download_dir = os.path.expanduser("~/Downloads")
 
-            # Prepare file paths (if documents exist)
-            file_paths = []
-            if documents:
-                # Try to find the downloaded files in the download directory
-                for doc in documents:
-                    doc_name = os.path.basename(doc['url'])
-                    # Look for files that might match this document
-                    potential_files = []
-                    for file in os.listdir(download_dir):
-                        if doc_name in file or filename.split('.')[0] in file:
-                            potential_files.append(os.path.join(download_dir, file))
+        # Prepare file path
+        file_path = os.path.join(download_dir, filename)
 
-                    if potential_files:
-                        # Use the most recent file
-                        latest_file = max(potential_files, key=os.path.getctime)
-                        file_paths.append(latest_file)
+        if messenger == "viber":
+            # Use viber://forward to share text
+            viber_url = f"viber://forward?text={encoded_message}"
+            try:
+                webbrowser.open(viber_url)
+                QMessageBox.information(self, "✅ Viber відкрито",
+                                              "Viber відкрито з попередньо заповненим повідомленням!\n\n"
+                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
+                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
+                QGuiApplication.clipboard().setText(file_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Viber: {e}")
 
-            # Platform-specific messenger opening
-            system = platform.system().lower()
-
-            if messenger == "viber":
-                if system == "windows":
-                    # Try to open Viber desktop app
-                    try:
-                        subprocess.Popen(["viber://open"])
-                        QMessageBox.information(self, "✅ Viber відкрито",
-                                              "Viber відкрито!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли вручну")
-                    except:
-                        # Fallback to web version
-                        webbrowser.open("https://web.viber.com/")
-                        QMessageBox.information(self, "🌐 Viber Web відкрито",
-                                              "Viber Web відкрито в браузері!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли через папку")
-
-                elif system == "darwin":  # macOS
-                    subprocess.Popen(["open", "viber://open"])
-                    QMessageBox.information(self, "✅ Viber відкрито",
-                                          "Viber відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-                elif system == "linux":
-                    subprocess.Popen(["xdg-open", "viber://open"])
-                    QMessageBox.information(self, "✅ Viber відкрито",
-                                          "Viber відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-            elif messenger == "telegram":
-                if system == "windows":
-                    try:
-                        subprocess.Popen(["telegram://open"])
-                        QMessageBox.information(self, "✅ Telegram відкрито",
-                                              "Telegram відкрито!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли вручну")
-                    except:
-                        webbrowser.open("https://web.telegram.org/")
-                        QMessageBox.information(self, "🌐 Telegram Web відкрито",
-                                              "Telegram Web відкрито в браузері!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли через папку")
-
-                elif system == "darwin":  # macOS
-                    subprocess.Popen(["open", "telegram://open"])
-                    QMessageBox.information(self, "✅ Telegram відкрито",
-                                          "Telegram відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-                elif system == "linux":
-                    subprocess.Popen(["xdg-open", "telegram://open"])
-                    QMessageBox.information(self, "✅ Telegram відкрито",
-                                          "Telegram відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-            # Show file info if files exist
-            if file_paths:
-                file_info = "\n\n📎 **Завантажені файли:**\n"
-                for i, path in enumerate(file_paths, 1):
-                    file_info += f"{i}. {os.path.basename(path)}\n"
-
-                QMessageBox.information(self, "📁 Інформація про файли",
-                                      f"Файли готові для відправки!\n{file_info}")
-
-        except Exception as e:
-            QMessageBox.warning(self, "⚠️ Помилка",
-                              f"Не вдалося відкрити {messenger.title()}\n\n"
-                              f"Помилка: {str(e)}\n\n"
-                              "💡 Але повідомлення скопійовано в буфер обміну!\n"
-                              "Ви можете вставити його вручну в будь-який месенджер.")
+        elif messenger == "telegram":
+            # Use tg://msg to share text
+            telegram_url = f"tg://msg?text={encoded_message}"
+            try:
+                webbrowser.open(telegram_url)
+                QMessageBox.information(self, "✅ Telegram відкрито",
+                                              "Telegram відкрито з попередньо заповненим повідомленням!\n\n"
+                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
+                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
+                QGuiApplication.clipboard().setText(file_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Telegram: {e}")
 
     def copy_and_show_confirmation(self, message, confirmation_text):
         """Copy message to clipboard and show confirmation"""
@@ -2913,62 +2790,11 @@ class TaskDetailsWindow(QDialog):
 
         return "\n".join(message_lines)
 
-    def copy_share_message_to_clipboard(self, message):
-        """Copy the share message to clipboard"""
-        clipboard = QApplication.clipboard()
-        mime_data = QMimeData()
-        mime_data.setText(message)
-        clipboard.setMimeData(mime_data)
 
-    def show_share_message_dialog(self, task_name, order_info, filename):
-        """Show dialog with share message and copy button"""
-        message = self.generate_share_message(task_name, order_info, filename)
 
-        # Create dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Повідомлення для відправки")
-        dialog.setGeometry(200, 200, 500, 400)
-        dialog.setModal(True)
 
-        layout = QVBoxLayout(dialog)
 
-        # Title
-        title = QLabel("📱 Повідомлення для Viber/Telegram")
-        layout.addWidget(title)
 
-        # Message text area
-        text_edit = QTextEdit()
-        text_edit.setPlainText(message)
-        text_edit.setReadOnly(True)
-        layout.addWidget(text_edit)
-
-        # Buttons
-        button_layout = QHBoxLayout()
-
-        copy_button = QPushButton("📋 Копіювати")
-        copy_button.clicked.connect(lambda: self.copy_and_show_confirmation(message, dialog))
-
-        close_button = QPushButton("❌ Закрити")
-        close_button.clicked.connect(dialog.close)
-
-        button_layout.addWidget(copy_button)
-        button_layout.addWidget(close_button)
-        layout.addLayout(button_layout)
-
-        # Instructions
-        instructions = QLabel("💡 Натисніть 'Копіювати', щоб скопіювати повідомлення в буфер обміну\nта вставити в Viber, Telegram або інший месенджер")
-        instructions.setWordWrap(True)
-        layout.addWidget(instructions)
-
-        dialog.exec()
-
-    def copy_and_show_confirmation(self, message, parent_dialog):
-        """Copy message to clipboard and show confirmation"""
-        self.copy_share_message_to_clipboard(message)
-        QMessageBox.information(self, "✅ Скопійовано",
-                              "Повідомлення скопійовано в буфер обміну!\n\n"
-                              "Тепер ви можете вставити його в Viber, Telegram або інший додаток.")
-        parent_dialog.close()
 
     def extract_order_info(self, text):
         """Extract order/decision information from task description"""
@@ -3117,75 +2943,7 @@ class TaskDetailsWindow(QDialog):
             QMessageBox.critical(self, "Завантаження Невдале",
                                f"Не вдалося завантажити жоден документ")
 
-    def share_task_info(self):
-        """Generate and show share message for current task"""
-        task_name = self.task_data.get('task_name', 'No Task Name')
-        task_description = self.task_data.get('task_description', '')
-        dates = self.task_data.get('dates', '')
-        percentage = self.task_data.get('percentage', 0)
 
-        # Use corrected status - if task is 100% complete, show as completed
-        if percentage == 100:
-            status = "✅ Завершено"
-        else:
-            status = self.task_data.get('status', '')
-
-        # Extract order info from both task name and description
-        order_info = self.extract_order_info(task_name)
-        if not order_info:
-            order_info = self.extract_order_info(task_description)
-
-        # Generate filename (same format as download)
-        if order_info:
-            filename = f"{order_info} - {task_name}.pdf"
-        else:
-            filename = f"{task_name}.pdf"
-
-        # Parse dates to get start and end date
-        start_date = ""
-        end_date = ""
-        if ' - ' in dates:
-            start_date, end_date = dates.split(' - ', 1)
-
-        # Clean description
-        clean_desc = self.clean_description(task_description) if task_description else ''
-
-        # Get task ID for link
-        task_id = self.task_data.get('task_id', '')
-        link = f"https://calendar.nupp.edu.ua/index.php?task={task_id}" if task_id else ""
-
-        # Create the message using the new template
-        message_lines = []
-        message_lines.append(f"📋 **{task_name}**")
-        message_lines.append("")
-        message_lines.append(f"📅 **Терміни:** {start_date} — {end_date}")
-        message_lines.append(f"🔄 **Статус:** {status}")
-        message_lines.append("")
-        message_lines.append("ℹ️ **Деталі:**")
-
-        if order_info:
-            message_lines.append(f"Відповідно до: {order_info}")
-
-        if clean_desc:
-            # Limit description length for readability
-            if len(clean_desc) > 300:
-                clean_desc = clean_desc[:300] + "..."
-            message_lines.append(clean_desc)
-
-        if percentage > 0:
-            message_lines.append(f"Виконання: {percentage}%")
-
-        documents = self.task_data.get('documents', [])
-        if documents:
-            message_lines.append(f"Документів: {len(documents)}")
-
-        message_lines.append("")
-        message_lines.append(f"📎 **Посилання:** {link}")
-
-        message = "\n".join(message_lines)
-
-        # Show share message dialog
-        self.show_share_message_dialog_with_download(task_name, order_info, filename, message, documents)
 
     def show_share_message_dialog_with_download(self, task_name, order_info, filename, message, documents):
         """Show enhanced share dialog with Viber/Telegram auto-sharing"""
@@ -3267,148 +3025,48 @@ class TaskDetailsWindow(QDialog):
 
     def share_to_messenger(self, messenger, message, filename, documents):
         """Share message and files to Viber or Telegram automatically"""
-        import subprocess
-        import platform
-        import os
         import webbrowser
+        import urllib.parse
+        import os
         from PyQt6.QtWidgets import QMessageBox
-        from PyQt6.QtGui import QClipboard, QGuiApplication
-        from PyQt6.QtCore import QTimer
+        from PyQt6.QtGui import QGuiApplication
 
-        try:
-            # Copy message to clipboard first
-            clipboard = QGuiApplication.clipboard()
-            clipboard.setText(message)
+        # URL-encode the message for use in the URL
+        encoded_message = urllib.parse.quote(message)
 
-            # Get the download directory
-            download_dir = os.path.expanduser("~/Downloads")  # Default download directory
+        # Get the download directory
+        download_dir = os.path.expanduser("~/Downloads")
 
-            # Prepare file paths (if documents exist)
-            file_paths = []
-            if documents:
-                # Try to find the downloaded files in the download directory
-                for doc in documents:
-                    doc_name = os.path.basename(doc['url'])
-                    # Look for files that might match this document
-                    potential_files = []
-                    for file in os.listdir(download_dir):
-                        if doc_name in file or filename.split('.')[0] in file:
-                            potential_files.append(os.path.join(download_dir, file))
+        # Prepare file path
+        file_path = os.path.join(download_dir, filename)
 
-                    if potential_files:
-                        # Use the most recent file
-                        latest_file = max(potential_files, key=os.path.getctime)
-                        file_paths.append(latest_file)
+        if messenger == "viber":
+            # Use viber://forward to share text
+            viber_url = f"viber://forward?text={encoded_message}"
+            try:
+                webbrowser.open(viber_url)
+                QMessageBox.information(self, "✅ Viber відкрито",
+                                              "Viber відкрито з попередньо заповненим повідомленням!\n\n"
+                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
+                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
+                QGuiApplication.clipboard().setText(file_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Viber: {e}")
 
-            # Platform-specific messenger opening
-            system = platform.system().lower()
+        elif messenger == "telegram":
+            # Use tg://msg to share text
+            telegram_url = f"tg://msg?text={encoded_message}"
+            try:
+                webbrowser.open(telegram_url)
+                QMessageBox.information(self, "✅ Telegram відкрито",
+                                              "Telegram відкрито з попередньо заповненим повідомленням!\n\n"
+                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
+                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
+                QGuiApplication.clipboard().setText(file_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Telegram: {e}")
 
-            if messenger == "viber":
-                if system == "windows":
-                    # Try to open Viber desktop app
-                    try:
-                        subprocess.Popen(["viber://open"])
-                        QMessageBox.information(self, "✅ Viber відкрито",
-                                              "Viber відкрито!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли вручну")
-                    except:
-                        # Fallback to web version
-                        webbrowser.open("https://web.viber.com/")
-                        QMessageBox.information(self, "🌐 Viber Web відкрито",
-                                              "Viber Web відкрито в браузері!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли через папку")
 
-                elif system == "darwin":  # macOS
-                    subprocess.Popen(["open", "viber://open"])
-                    QMessageBox.information(self, "✅ Viber відкрито",
-                                          "Viber відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-                elif system == "linux":
-                    subprocess.Popen(["xdg-open", "viber://open"])
-                    QMessageBox.information(self, "✅ Viber відкрито",
-                                          "Viber відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-            elif messenger == "telegram":
-                if system == "windows":
-                    try:
-                        subprocess.Popen(["telegram://open"])
-                        QMessageBox.information(self, "✅ Telegram відкрито",
-                                              "Telegram відкрито!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли вручну")
-                    except:
-                        webbrowser.open("https://web.telegram.org/")
-                        QMessageBox.information(self, "🌐 Telegram Web відкрито",
-                                              "Telegram Web відкрито в браузері!\n\n"
-                                              "📋 Повідомлення скопійовано в буфер обміну\n"
-                                              "📎 Файли знаходяться в папці Завантаження\n"
-                                              "💡 Вставте текст (Ctrl+V) та додайте файли через папку")
-
-                elif system == "darwin":  # macOS
-                    subprocess.Popen(["open", "telegram://open"])
-                    QMessageBox.information(self, "✅ Telegram відкрито",
-                                          "Telegram відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-                elif system == "linux":
-                    subprocess.Popen(["xdg-open", "telegram://open"])
-                    QMessageBox.information(self, "✅ Telegram відкрито",
-                                          "Telegram відкрито!\n\n"
-                                          "📋 Повідомлення скопійовано в буфер обміну\n"
-                                          "📎 Файли знаходяться в папці Завантаження")
-
-            # Show file info if files exist
-            if file_paths:
-                file_info = "\n\n📎 **Завантажені файли:**\n"
-                for i, path in enumerate(file_paths, 1):
-                    file_info += f"{i}. {os.path.basename(path)}\n"
-
-                QMessageBox.information(self, "📁 Інформація про файли",
-                                      f"Файли готові для відправки!\n{file_info}")
-
-        except Exception as e:
-            QMessageBox.warning(self, "⚠️ Помилка",
-                              f"Не вдалося відкрити {messenger.title()}\n\n"
-                              f"Помилка: {str(e)}\n\n"
-                              "💡 Але повідомлення скопійовано в буфер обміну!\n"
-                              "Ви можете вставити його вручну в будь-який месенджер.")
-
-    def download_and_share(self, parent_dialog):
-        """Download document and then show share message"""
-        documents = self.task_data.get('documents', [])
-        if not documents:
-            QMessageBox.information(self, "Немає документів", "Для цього завдання немає доступних документів")
-            return
-
-        # Use the existing download_documents method
-        self.download_documents()
-
-        # After download, show the original share message dialog
-        task_name = self.task_data.get('task_name', 'No Task Name')
-        task_description = self.task_data.get('task_description', '')
-        order_info = self.extract_order_info(task_name)
-        if not order_info:
-            order_info = self.extract_order_info(task_description)
-
-        if order_info:
-            filename = f"{order_info} - {task_name}.pdf"
-        else:
-            filename = f"{task_name}.pdf"
-
-        share_message = self.generate_share_message(task_name, order_info, filename)
-        self.show_share_message_dialog(task_name, order_info, filename)
-
-        parent_dialog.close()
 
     def refresh_task(self):
         """Refresh task data (would require re-fetching from server)"""
