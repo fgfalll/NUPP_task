@@ -3909,74 +3909,7 @@ class PasswordDialog(QDialog):
             self.show_password_button.setText("👁️")
             self.show_password_button.setToolTip("Показати пароль")
 
-def generate_admin_key_console():
-    """Generate admin override file via console command"""
-    import getpass
-
-    # Initialize password manager
-    password_manager = PasswordManager()
-
-    # Check if password is set
-    if not password_manager.is_password_set():
-        print("Помилка: Пароль не встановлено. Спочатку запустіть програму.")
-        sys.exit(1)
-
-    # Prompt for current password
-    print("Генерація адміністративного ключа відновлення")
-    print("Введіть поточний пароль:")
-    password = getpass.getpass("")
-
-    # Verify password
-    if not password_manager.verify_password(password):
-        print("Помилка: Неправильний пароль!")
-        sys.exit(1)
-
-    # Parse args for optional filename
-    output_filename = ".task_monitor_admin.key"
-    if len(sys.argv) > 2:
-        # Check if next arg is not a flag
-        potential_file = sys.argv[2]
-        if not potential_file.startswith('-'):
-            output_filename = potential_file
-
-    # Generate admin key file
-    timestamp = datetime.now().isoformat()
-    app_id = "TaskMonitor"
-
-    # Secret for signing (hardcoded, never exposed in UI)
-    secret = "task_monitor_admin_secret_2024"
-
-    # Create signature
-    signature_data = f"{secret}:{timestamp}:{app_id}"
-    signature = hmac.new(secret.encode(), signature_data.encode(), hashlib.sha256).hexdigest()
-
-    # File content
-    file_content = {
-        "signature": signature,
-        "timestamp": timestamp,
-        "app_id": app_id
-    }
-
-    # Save to file
-    import json
-    output_path = os.path.expanduser(f"~/{output_filename}")
-    try:
-        with open(output_path, 'w') as f:
-            json.dump(file_content, f, indent=2)
-        print(f"Адміністративний ключ створено: {output_path}")
-    except Exception as e:
-        print(f"Помилка при створенні файлу: {e}")
-        sys.exit(1)
-
-    sys.exit(0)
-
-
 def main():
-    # Check for admin key generation command BEFORE creating QApplication
-    if '-admk' in sys.argv or '--admin-key' in sys.argv:
-        generate_admin_key_console()
-        return
-
     app = QApplication(sys.argv)
 
     # Set application style

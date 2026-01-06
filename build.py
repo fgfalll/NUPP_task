@@ -21,3 +21,12 @@ PyInstaller.__main__.run([
     '--noconsole',
     '--name=PasswordRestore',
 ])
+
+# Build admin key generator (console application)
+print("\nBuilding AdminKeyGen...")
+PyInstaller.__main__.run([
+    'admin_key_gen.py',
+    '--onefile',
+    '--console',
+    '--name=AdminKeyGen',
+])

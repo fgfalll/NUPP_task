@@ -243,7 +243,8 @@ class PasswordRestoreDialog(QDialog):
 
     def initUI(self):
         self.setWindowTitle("🔐 Відновлення паролю")
-        self.setFixedSize(500, 300)
+        self.resize(500, 300)
+        self.setMinimumSize(500, 300)
         self.setModal(True)
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
@@ -569,6 +570,7 @@ class PasswordRestoreDialog(QDialog):
         self.recovery_key_input.setReadOnly(True)
         self.show_status("Ключ підтверджено! Тепер встановіть новий пароль.", False)
         self.new_password_input.setFocus()
+        self.adjustSize()  # Resize window to fit new content
 
     def verify_security_questions(self):
         """Verify security answers and show password fields"""
@@ -596,6 +598,7 @@ class PasswordRestoreDialog(QDialog):
         self.answer2_input.setReadOnly(True)
         self.show_status("Відповіді підтверджено! Тепер встановіть новий пароль.", False)
         self.sq_new_password_input.setFocus()
+        self.adjustSize()  # Resize window to fit new content
 
     def restore_with_key(self):
         """Restore password using recovery key (after verification)"""
