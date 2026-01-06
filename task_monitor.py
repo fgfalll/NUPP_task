@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QLineEdit, QPushButton,
                             QTableWidget, QTableWidgetItem, QMessageBox,
                             QTabWidget, QHeaderView, QCheckBox,
-                            QProgressBar, QFileDialog, QToolBar, QSplitter, QDialog, QGroupBox, QGridLayout, QTextEdit, QSizePolicy)
+                            QProgressBar, QFileDialog, QToolBar, QSplitter, QDialog, QGroupBox, QGridLayout, QTextEdit, QSizePolicy, QComboBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings, QUrl
 import hashlib
 import base64
@@ -27,6 +27,8 @@ import webbrowser
 import re
 import pickle
 from pathlib import Path
+import secrets
+import hmac
 
 class TaskTracker:
     """Manages task tracking and archiving functionality"""
@@ -3066,6 +3068,17 @@ class TaskDetailsWindow(QDialog):
             except Exception as e:
                 QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Telegram: {e}")
 
+    def copy_and_show_confirmation(self, message, confirmation_text):
+        """Copy message to clipboard and show confirmation"""
+        from PyQt6.QtGui import QGuiApplication
+
+        # Copy to clipboard
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(message)
+
+        # Show confirmation
+        QMessageBox.information(self, "✅ Скопійовано", confirmation_text)
+
 
 
     def refresh_task(self):
@@ -3330,6 +3343,248 @@ class PasswordManager:
             self.set_password(new_password)
             return True
         return False
+
+    # Recovery key methods
+    def generate_recovery_key(self):
+        """Generate a random recovery key"""
+        return secrets.token_hex(16)  # 32 hex characters
+
+    def set_recovery_key(self, recovery_key):
+        """Store the recovery key hash"""
+        recovery_key_hash = self.hash_password(recovery_key)
+        self.settings.setValue("recovery_key_hash", recovery_key_hash)
+
+    def verify_recovery_key(self, recovery_key):
+        """Verify the recovery key"""
+        stored_hash = self.settings.value("recovery_key_hash")
+        if not stored_hash:
+            return False
+        entered_hash = self.hash_password(recovery_key)
+        return stored_hash == entered_hash
+
+    def is_recovery_key_set(self):
+        """Check if recovery key has been set"""
+        return self.settings.value("recovery_key_hash") is not None
+
+    # Security questions methods
+    SECURITY_QUESTIONS = [
+        "Ваша посада в закладі?",
+        "Номер вашого робочого кабінету?",
+        "На якому факультеті/відділі ви працюєте?",
+        "Рік вашого працевлаштування?",
+        "ПІБ вашого безпосереднього керівника?"
+    ]
+
+    def set_security_question(self, question_num, question, answer):
+        """Store a security question and answer hash"""
+        self.settings.setValue(f"security_question_{question_num}", question)
+        answer_hash = self.hash_password(answer.lower().strip())
+        self.settings.setValue(f"security_answer_{question_num}_hash", answer_hash)
+
+    def get_security_question(self, question_num):
+        """Get a stored security question"""
+        return self.settings.value(f"security_question_{question_num}")
+
+    def verify_security_answer(self, question_num, answer):
+        """Verify a security question answer"""
+        stored_hash = self.settings.value(f"security_answer_{question_num}_hash")
+        if not stored_hash:
+            return False
+        entered_hash = self.hash_password(answer.lower().strip())
+        return stored_hash == entered_hash
+
+    def are_security_questions_set(self):
+        """Check if security questions have been set up"""
+        q1 = self.settings.value("security_question_1")
+        q2 = self.settings.value("security_question_2")
+        return q1 is not None and q2 is not None
+
+class RecoveryKeyDisplayDialog(QDialog):
+    """Dialog for displaying recovery key during setup"""
+
+    def __init__(self, recovery_key, parent=None):
+        super().__init__(parent)
+        self.recovery_key = recovery_key
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle("🔑 Ключ відновлення")
+        self.setFixedSize(500, 250)
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+
+        layout = QVBoxLayout(self)
+
+        # Title
+        title_label = QLabel("Збережіть ключ відновлення!")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        layout.addWidget(title_label)
+
+        # Warning
+        warning_label = QLabel("Цей ключ дозволить вам відновити доступ до програми, якщо ви забудете пароль.\n\n"
+                              "Збережіть його в безпечному місці. Без цього ключа ви не зможете відновити пароль!")
+        warning_label.setWordWrap(True)
+        warning_label.setStyleSheet("color: orange; font-weight: bold;")
+        warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(warning_label)
+
+        # Recovery key display
+        key_group = QGroupBox("Ваш ключ відновлення:")
+        key_layout = QVBoxLayout()
+
+        self.key_display = QLineEdit(self.recovery_key)
+        self.key_display.setReadOnly(True)
+        self.key_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.key_display.setStyleSheet("font-size: 14px; font-family: Consolas, monospace; padding: 10px;")
+        key_layout.addWidget(self.key_display)
+
+        # Copy button
+        copy_button = QPushButton("📋 Копіювати ключ")
+        copy_button.clicked.connect(self.copy_key)
+        key_layout.addWidget(copy_button)
+
+        key_group.setLayout(key_layout)
+        layout.addWidget(key_group)
+
+        # Confirmation
+        self.confirmed_checkbox = QCheckBox("Я зберіг(ла) ключ у безпечному місці")
+        layout.addWidget(self.confirmed_checkbox)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("Продовжити")
+        ok_button.clicked.connect(self.accept)
+        ok_button.setDefault(True)
+        button_layout.addStretch()
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+
+    def copy_key(self):
+        """Copy recovery key to clipboard"""
+        from PyQt6.QtGui import QClipboard
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.recovery_key)
+        QMessageBox.information(self, "Скопійовано", "Ключ скопійовано в буфер обміну!")
+
+    def accept(self):
+        if not self.confirmed_checkbox.isChecked():
+            QMessageBox.warning(self, "Увага",
+                             "Будь ласка, підтвердіть, що ви зберегли ключ у безпечному місці!")
+            return
+        super().accept()
+
+
+class SecurityQuestionsSetupDialog(QDialog):
+    """Dialog for setting up security questions during first time setup"""
+
+    def __init__(self, password_manager, parent=None):
+        super().__init__(parent)
+        self.password_manager = password_manager
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle("❓ Питання для відновлення")
+        self.setFixedSize(450, 350)
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+
+        layout = QVBoxLayout(self)
+
+        # Title
+        title_label = QLabel("Налаштування запасного способу відновлення")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        layout.addWidget(title_label)
+
+        # Info
+        info_label = QLabel("Виберіть 2 питання та надайте відповіді. Це допоможе відновити пароль, якщо ключ втрачено.")
+        info_label.setWordWrap(True)
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_label)
+
+        # Question 1
+        q1_layout = QHBoxLayout()
+        q1_layout.addWidget(QLabel("Питання 1:"))
+        self.question1_combo = QComboBox()
+        self.question1_combo.addItems(self.password_manager.SECURITY_QUESTIONS)
+        self.question1_combo.currentIndexChanged.connect(self.on_question1_changed)
+        q1_layout.addWidget(self.question1_combo)
+        layout.addLayout(q1_layout)
+
+        self.answer1_input = QLineEdit()
+        self.answer1_input.setPlaceholderText("Ваша відповідь...")
+        self.answer1_input.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.answer1_input)
+
+        # Question 2
+        q2_layout = QHBoxLayout()
+        q2_layout.addWidget(QLabel("Питання 2:"))
+        self.question2_combo = QComboBox()
+        self.question2_combo.addItems(self.password_manager.SECURITY_QUESTIONS)
+        self.question2_combo.currentIndexChanged.connect(self.on_question2_changed)
+        q2_layout.addWidget(self.question2_combo)
+        layout.addLayout(q2_layout)
+
+        self.answer2_input = QLineEdit()
+        self.answer2_input.setPlaceholderText("Ваша відповідь...")
+        self.answer2_input.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.answer2_input)
+
+        layout.addStretch()
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        skip_button = QPushButton("Пропустити")
+        skip_button.clicked.connect(self.skip)
+        button_layout.addWidget(skip_button)
+
+        ok_button = QPushButton("Завершити")
+        ok_button.clicked.connect(self.accept)
+        ok_button.setDefault(True)
+        button_layout.addWidget(ok_button)
+
+        layout.addLayout(button_layout)
+
+        # Set different initial questions
+        self.question2_combo.setCurrentIndex(1)
+
+    def on_question1_changed(self, index):
+        # Prevent question2 from being the same as question1
+        if self.question2_combo.currentIndex() == index:
+            self.question2_combo.setCurrentIndex((index + 1) % len(self.password_manager.SECURITY_QUESTIONS))
+
+    def on_question2_changed(self, index):
+        # Prevent question1 from being the same as question2
+        if self.question1_combo.currentIndex() == index:
+            self.question1_combo.setCurrentIndex((index + 1) % len(self.password_manager.SECURITY_QUESTIONS))
+
+    def skip(self):
+        # Confirm skip
+        reply = QMessageBox.question(self, "Пропустити?",
+                                    "Ви впевнені, що хочете пропустити цей крок?\n\n"
+                                    "Без питань для відновлення ви зможете використовувати лише ключ відновлення.",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.reject()
+
+    def accept(self):
+        q1 = self.question1_combo.currentText()
+        a1 = self.answer1_input.text().strip()
+        q2 = self.question2_combo.currentText()
+        a2 = self.answer2_input.text().strip()
+
+        if not a1 or not a2:
+            QMessageBox.warning(self, "Помилка", "Будь ласка, надайте відповіді на обидва питання!")
+            return
+
+        # Save security questions
+        self.password_manager.set_security_question(1, q1, a1)
+        self.password_manager.set_security_question(2, q2, a2)
+
+        super().accept()
+
 
 class FirstTimePasswordDialog(QDialog):
     """Dialog for setting password on first launch"""
@@ -3654,7 +3909,74 @@ class PasswordDialog(QDialog):
             self.show_password_button.setText("👁️")
             self.show_password_button.setToolTip("Показати пароль")
 
+def generate_admin_key_console():
+    """Generate admin override file via console command"""
+    import getpass
+
+    # Initialize password manager
+    password_manager = PasswordManager()
+
+    # Check if password is set
+    if not password_manager.is_password_set():
+        print("Помилка: Пароль не встановлено. Спочатку запустіть програму.")
+        sys.exit(1)
+
+    # Prompt for current password
+    print("Генерація адміністративного ключа відновлення")
+    print("Введіть поточний пароль:")
+    password = getpass.getpass("")
+
+    # Verify password
+    if not password_manager.verify_password(password):
+        print("Помилка: Неправильний пароль!")
+        sys.exit(1)
+
+    # Parse args for optional filename
+    output_filename = ".task_monitor_admin.key"
+    if len(sys.argv) > 2:
+        # Check if next arg is not a flag
+        potential_file = sys.argv[2]
+        if not potential_file.startswith('-'):
+            output_filename = potential_file
+
+    # Generate admin key file
+    timestamp = datetime.now().isoformat()
+    app_id = "TaskMonitor"
+
+    # Secret for signing (hardcoded, never exposed in UI)
+    secret = "task_monitor_admin_secret_2024"
+
+    # Create signature
+    signature_data = f"{secret}:{timestamp}:{app_id}"
+    signature = hmac.new(secret.encode(), signature_data.encode(), hashlib.sha256).hexdigest()
+
+    # File content
+    file_content = {
+        "signature": signature,
+        "timestamp": timestamp,
+        "app_id": app_id
+    }
+
+    # Save to file
+    import json
+    output_path = os.path.expanduser(f"~/{output_filename}")
+    try:
+        with open(output_path, 'w') as f:
+            json.dump(file_content, f, indent=2)
+        print(f"Адміністративний ключ створено: {output_path}")
+    except Exception as e:
+        print(f"Помилка при створенні файлу: {e}")
+        sys.exit(1)
+
+    sys.exit(0)
+
+
 def main():
+    # Check for admin key generation command BEFORE creating QApplication
+    if '-admk' in sys.argv or '--admin-key' in sys.argv:
+        generate_admin_key_console()
+        return
+
     app = QApplication(sys.argv)
 
     # Set application style
@@ -3672,9 +3994,24 @@ def main():
             if first_time_dialog.exec() == QDialog.DialogCode.Accepted:
                 password, confirm_password = first_time_dialog.get_passwords()
                 password_manager.set_password(password)
+
+                # Step 2: Show recovery key
+                recovery_key = password_manager.generate_recovery_key()
+                password_manager.set_recovery_key(recovery_key)
+
+                recovery_key_dialog = RecoveryKeyDisplayDialog(recovery_key)
+                if recovery_key_dialog.exec() != QDialog.DialogCode.Accepted:
+                    sys.exit(0)
+
+                # Step 3: Security questions setup (optional)
+                security_questions_dialog = SecurityQuestionsSetupDialog(password_manager)
+                security_questions_dialog.exec()
+                # User can skip this step, so we don't check the result
+
                 QMessageBox.information(None, "Успіх",
-                                       "Пароль успішно встановлено!\n\n"
-                                       "Тепер ви можете використовувати цей пароль для доступу до програми.")
+                                       "Налаштування завершено!\n\n"
+                                       "Пароль та ключ відновлення встановлено.\n"
+                                       "Тепер ви можете використовувати програму.")
                 break
             else:
                 # User cancelled password setup
