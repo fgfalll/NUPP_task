@@ -17,7 +17,7 @@
 1. **Вимоги:** Python 3.8+
 2. **Клонуйте репозиторій:**
    ```bash
-   git clone https://github.com/your-username/task-monitor.git
+   git clone https://github.com/fgfalll/NUPP_task
    cd task-monitor
    ```
 3. **Встановіть залежності:**
