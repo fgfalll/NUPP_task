@@ -82,7 +82,7 @@ PyInstaller.__main__.run([
     '--name=AdminKeyGen',
 ])
 
-# Post-build cleanup: remove build/ folder, keeping only dist/
+# Post-build cleanup: remove build/ folder
 print("\nCleaning up intermediate build files...")
 if os.path.exists('build'):
     shutil.rmtree('build')

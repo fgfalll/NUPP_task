@@ -23,22 +23,31 @@ def main():
     password_hash = settings.value("password_hash")
     if not password_hash:
         print("Помилка: Пароль не встановлено.")
-        print("Спочатку запустіть TaskMonitor для встановлення пароля.")
         input("\nНатисніть Enter для виходу...")
         sys.exit(1)
 
-    print("Інсталяція TaskMonitor виявлено.")
+    print("ПОПЕРЕДЖЕННЯ: Адміністративний ключ дозволяє відновити")
+    print("доступ без знання поточного пароля.")
     print()
-    print("ПОПЕРЕДЖЕННЯ: Адміністративний ключ дозволяє відновити доступ")
-    print("без знання поточного пароля. Використовуйте обережно!")
-    print()
+
+    # Prompt for admin key
+    admin_key = input("Введіть адміністративний ключ: ").strip()
+    if not admin_key or len(admin_key) < 4:
+        print("\nПомилка: Ключ повинен містити щонайменше 4 символи.")
+        input("\nНатисніть Enter для виходу...")
+        sys.exit(1)
+
+    # HARDCODED EXPECTED KEY - must match the one in password_restore.py
+    expected_key = "Taras2025"  # CHANGE BEFORE PRODUCTION!
+
+    if admin_key != expected_key:
+        print("\nПомилка: Невірний адміністративний ключ.")
+        input("\nНатисніть Enter для виходу...")
+        sys.exit(1)
 
     # Generate admin key file
     timestamp = datetime.now().isoformat()
     app_id = "TaskMonitor"
-
-    # HARDCODED ADMIN KEY - must match the one in password_restore.py
-    admin_key = "Taras2025"  # CHANGE BEFORE PRODUCTION!
 
     # Create signature using the admin key as the secret
     signature_data = f"{admin_key}:{timestamp}:{app_id}"
@@ -71,13 +80,7 @@ def main():
     try:
         with open(output_path, 'w') as f:
             json.dump(file_content, f, indent=2)
-        print(f"\nУспіх! Адміністративний ключ створено:")
-        print(f"Шлях: {output_path}")
-        print()
-        print("Використання:")
-        print("1. Запустіть PasswordRestore.exe")
-        print("2. Перетягніть цей файл у вікно програми")
-        print()
+        print("\nГотово.")
     except Exception as e:
         print(f"\nПомилка при створенні файлу: {e}")
         input("\nНатисніть Enter для виходу...")

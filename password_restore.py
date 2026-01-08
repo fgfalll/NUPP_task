@@ -146,8 +146,8 @@ class PasswordRestoreManager:
         return code == self.EMERGENCY_CODE
 
 
-class AdminOverrideDialog(QDialog):
-    """Hidden dialog for admin override password reset"""
+class PasswordSetDialog(QDialog):
+    """Simple dialog for setting a new password"""
 
     def __init__(self, restore_manager, parent=None):
         super().__init__(parent)
@@ -155,43 +155,27 @@ class AdminOverrideDialog(QDialog):
         self.initUI()
 
     def initUI(self):
-        self.setWindowTitle("🔧 Режим відновлення доступу")
+        self.setWindowTitle("🔑 Новий пароль")
         self.setModal(True)
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Title
-        title_label = QLabel("Адміністративний доступ підтверджено")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: green;")
-        layout.addWidget(title_label)
-
-        # Spacer
-        layout.addSpacing(15)
-
         # New password
-        new_password_layout = QHBoxLayout()
-        new_password_layout.addWidget(QLabel("Новий пароль:"))
+        layout.addWidget(QLabel("Новий пароль:"))
         self.new_password_input = QLineEdit()
         self.new_password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.new_password_input.setPlaceholderText("Введіть новий пароль")
-        new_password_layout.addWidget(self.new_password_input)
-        layout.addLayout(new_password_layout)
+        layout.addWidget(self.new_password_input)
 
         # Confirm new password
-        confirm_password_layout = QHBoxLayout()
-        confirm_password_layout.addWidget(QLabel("Підтвердьте:"))
+        layout.addWidget(QLabel("Підтвердьте пароль:"))
         self.confirm_password_input = QLineEdit()
         self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.confirm_password_input.setPlaceholderText("Підтвердьте пароль")
-        confirm_password_layout.addWidget(self.confirm_password_input)
-        layout.addLayout(confirm_password_layout)
-
-        layout.addSpacing(10)
+        layout.addWidget(self.confirm_password_input)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -201,7 +185,7 @@ class AdminOverrideDialog(QDialog):
         button_layout.addWidget(cancel_button)
 
         set_button = QPushButton("Встановити")
-        set_button.clicked.connect(self.accept)
+        set_button.clicked.connect(self.validate_and_set)
         set_button.setDefault(True)
         set_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         button_layout.addWidget(set_button)
@@ -211,11 +195,9 @@ class AdminOverrideDialog(QDialog):
         self.adjustSize()
         self.new_password_input.setFocus()
 
-    def get_passwords(self):
-        return self.new_password_input.text(), self.confirm_password_input.text()
-
-    def accept(self):
-        new_password, confirm_password = self.get_passwords()
+    def validate_and_set(self):
+        new_password = self.new_password_input.text()
+        confirm_password = self.confirm_password_input.text()
 
         if not new_password:
             QMessageBox.warning(self, "Помилка", "Пароль не може бути порожнім!")
@@ -248,8 +230,7 @@ class PasswordRestoreDialog(QDialog):
 
     def initUI(self):
         self.setWindowTitle("🔐 Відновлення паролю")
-        self.resize(500, 300)
-        self.setMinimumSize(500, 300)
+        self.setMinimumWidth(600)
         self.setModal(True)
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
@@ -287,6 +268,9 @@ class PasswordRestoreDialog(QDialog):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("padding: 10px;")
         layout.addWidget(self.status_label)
+
+        # Auto-size dialog to fit content
+        self.adjustSize()
 
     def create_recovery_key_tab(self):
         """Create recovery key tab"""
@@ -473,10 +457,10 @@ class PasswordRestoreDialog(QDialog):
     def on_legacy_admin_file_dropped(self, filepath):
         """Handle admin file drop event from legacy tab"""
         if self.restore_manager.verify_admin_file(filepath):
-            # Show admin override dialog
-            admin_dialog = AdminOverrideDialog(self.restore_manager, self)
-            admin_dialog.exec()
-            if admin_dialog.result() == QDialog.DialogCode.Accepted:
+            # Show password dialog as separate window (no parent)
+            password_dialog = PasswordSetDialog(self.restore_manager, None)
+            password_dialog.exec()
+            if password_dialog.result() == QDialog.DialogCode.Accepted:
                 self.accept()
             else:
                 # User cancelled - close app
@@ -550,10 +534,10 @@ class PasswordRestoreDialog(QDialog):
     def on_admin_file_dropped(self, filepath):
         """Handle admin file drop event"""
         if self.restore_manager.verify_admin_file(filepath):
-            # Show admin override dialog
-            admin_dialog = AdminOverrideDialog(self.restore_manager, self)
-            admin_dialog.exec()
-            if admin_dialog.result() == QDialog.DialogCode.Accepted:
+            # Show password dialog as separate window (no parent)
+            password_dialog = PasswordSetDialog(self.restore_manager, None)
+            password_dialog.exec()
+            if password_dialog.result() == QDialog.DialogCode.Accepted:
                 self.accept()
             else:
                 # User cancelled - close app
