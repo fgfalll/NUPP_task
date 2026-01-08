@@ -87,33 +87,22 @@ class PasswordRestoreManager:
 
     # Admin file verification
     def verify_admin_file(self, filepath):
-        """Verify admin override file using stored hash"""
+        """Verify admin override file"""
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
 
-            # Get the stored hash from the file
-            stored_hash = data.get("admin_key_hash")
-            if not stored_hash:
-                return False
+            # HARDCODED ADMIN KEY - must match the one in admin_key_gen.py
+            admin_key = "Taras2025"  # CHANGE BEFORE PRODUCTION!
 
-            # Default admin key - change this before production!
-            default_admin_key = "Taras2025"
-            expected_hash = hashlib.sha256(default_admin_key.encode()).hexdigest()
-
-            # Verify the hash matches the expected admin key
-            if stored_hash != expected_hash:
-                return False
-
-            # Additional signature verification
             timestamp = data.get("timestamp", "")
             app_id = data.get("app_id", "")
             signature = data.get("signature", "")
 
             # Recreate signature data
-            signature_data = f"{default_admin_key}:{timestamp}:{app_id}"
+            signature_data = f"{admin_key}:{timestamp}:{app_id}"
             expected_signature = hmac.new(
-                default_admin_key.encode(),
+                admin_key.encode(),
                 signature_data.encode(),
                 hashlib.sha256
             ).hexdigest()
@@ -167,11 +156,12 @@ class AdminOverrideDialog(QDialog):
 
     def initUI(self):
         self.setWindowTitle("🔧 Режим відновлення доступу")
-        self.setFixedSize(400, 250)
         self.setModal(True)
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
 
         # Title
         title_label = QLabel("Адміністративний доступ підтверджено")
@@ -180,7 +170,8 @@ class AdminOverrideDialog(QDialog):
         title_label.setStyleSheet("color: green;")
         layout.addWidget(title_label)
 
-        layout.addStretch()
+        # Spacer
+        layout.addSpacing(15)
 
         # New password
         new_password_layout = QHBoxLayout()
@@ -200,7 +191,7 @@ class AdminOverrideDialog(QDialog):
         confirm_password_layout.addWidget(self.confirm_password_input)
         layout.addLayout(confirm_password_layout)
 
-        layout.addStretch()
+        layout.addSpacing(10)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -217,6 +208,7 @@ class AdminOverrideDialog(QDialog):
 
         layout.addLayout(button_layout)
 
+        self.adjustSize()
         self.new_password_input.setFocus()
 
     def get_passwords(self):
@@ -486,6 +478,9 @@ class PasswordRestoreDialog(QDialog):
             admin_dialog.exec()
             if admin_dialog.result() == QDialog.DialogCode.Accepted:
                 self.accept()
+            else:
+                # User cancelled - close app
+                self.reject()
         else:
             QMessageBox.warning(self, "Помилка",
                 "Невірний адміністративний файл!\n\n"
@@ -560,6 +555,9 @@ class PasswordRestoreDialog(QDialog):
             admin_dialog.exec()
             if admin_dialog.result() == QDialog.DialogCode.Accepted:
                 self.accept()
+            else:
+                # User cancelled - close app
+                self.reject()
         else:
             self.show_status("Невірний файл адміністративного ключа!", True)
 
