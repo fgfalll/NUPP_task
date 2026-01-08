@@ -693,7 +693,7 @@ class TaskMonitorApp(QMainWindow):
     def encrypt_password(self, password):
         """Simple password encryption for storage"""
         # Create a simple hash-based encryption
-        key = "NUPPTaskMonitor2024"  # This should be more secure in production
+        key = "NUPPTaskMonitor2025"  # This should be more secure in production
         encoded = []
         for i, char in enumerate(password):
             key_char = key[i % len(key)]
@@ -702,7 +702,7 @@ class TaskMonitorApp(QMainWindow):
 
     def decrypt_password(self, encrypted_password):
         """Decrypt password from storage"""
-        key = "NUPPTaskMonitor2024"  # This should be more secure in production
+        key = "NUPPTaskMonitor2025"  # This should be more secure in production
         try:
             decoded = base64.b64decode(encrypted_password.encode()).decode()
             decrypted = []
@@ -801,11 +801,15 @@ class TaskMonitorApp(QMainWindow):
 
         layout = QVBoxLayout(dialog)
 
-        # Application name
+        # Application name and version
         title_label = QLabel("Монітор Завдань - Календар НУПП")
         title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
+
+        version_label = QLabel("Версія 2.3.0")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_label)
 
         # Description
         description_label = QLabel(
@@ -826,7 +830,7 @@ class TaskMonitorApp(QMainWindow):
         author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(author_label)
 
-        copyright_label = QLabel("© 2024 Всі права захищено")
+        copyright_label = QLabel("© 2025 Всі права захищено")
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(copyright_label)
 
@@ -3430,8 +3434,8 @@ class PasswordManager:
                 key = f.read()
         except FileNotFoundError:
             # Create a new key
-            password = b"task_monitor_default_key_2024"  # This should be changed in production
-            salt = b"task_monitor_salt_2024"
+            password = b"task_monitor_default_key_2025"  # This should be changed in production
+            salt = b"task_monitor_salt_2025"
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
