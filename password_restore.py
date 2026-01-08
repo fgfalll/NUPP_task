@@ -92,15 +92,17 @@ class PasswordRestoreManager:
             with open(filepath, 'r') as f:
                 data = json.load(f)
 
-            secret = "task_monitor_admin_secret_2024"
+            # SIMPLE HARDCODED ADMIN KEY (change before production!)
+            admin_key = "Taras2025"
+
             timestamp = data.get("timestamp", "")
             app_id = data.get("app_id", "")
             signature = data.get("signature", "")
 
             # Recreate signature data
-            signature_data = f"{secret}:{timestamp}:{app_id}"
+            signature_data = f"{admin_key}:{timestamp}:{app_id}"
             expected_signature = hmac.new(
-                secret.encode(),
+                admin_key.encode(),
                 signature_data.encode(),
                 hashlib.sha256
             ).hexdigest()

@@ -27,28 +27,22 @@ def main():
         input("\nНатисніть Enter для виходу...")
         sys.exit(1)
 
-    # Prompt for current password
-    import getpass
-    print("Введіть поточний пароль:")
-    password = getpass.getpass("")
+    print("Інсталяція TaskMonitor виявлено.")
+    print("Генерація адміністративного ключа...")
+    print()
+    print("ПОПЕРЕДЖЕННЯ: Використовуйте цей ключ лише для адміністративних цілей!")
+    print()
 
-    # Verify password
-    password_entered_hash = hashlib.sha256(password.encode()).hexdigest()
-    if password_entered_hash != password_hash:
-        print("\nПомилка: Невірний пароль!")
-        input("\nНатисніть Enter для виходу...")
-        sys.exit(1)
-
-    # Generate admin key file
+    # Generate admin key file with hardcoded admin key
     timestamp = datetime.now().isoformat()
     app_id = "TaskMonitor"
 
-    # Secret for signing (hardcoded, never exposed in UI)
-    secret = "task_monitor_admin_secret_2024"
+    # SIMPLE HARDCODED ADMIN KEY (change before production!)
+    admin_key = "Taras2025"
 
-    # Create signature
-    signature_data = f"{secret}:{timestamp}:{app_id}"
-    signature = hmac.new(secret.encode(), signature_data.encode(), hashlib.sha256).hexdigest()
+    # Create signature using the admin key as the secret
+    signature_data = f"{admin_key}:{timestamp}:{app_id}"
+    signature = hmac.new(admin_key.encode(), signature_data.encode(), hashlib.sha256).hexdigest()
 
     # File content
     file_content = {
