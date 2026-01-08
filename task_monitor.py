@@ -18,10 +18,7 @@ from PyQt6.QtGui import QFont, QColor, QAction
 from PyQt6.QtWidgets import QToolButton
 from bs4 import BeautifulSoup
 import json
-import hashlib
-import base64
 from datetime import datetime
-import os
 import urllib.parse
 import webbrowser
 import re
@@ -615,7 +612,8 @@ class LoginWorker(QThread):
                 description_text = re.sub(r'(\w+)\. +(\w+)', r'\1.\2', description_text)
 
                 # Only match URLs that end with document extensions (required, not optional)
-                url_pattern = r'https?://[^\s<>"\'\)]+\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:\?[^\s<>"\'\)]*)?'
+                # Use non-greedy quantifier to prevent consuming extension characters
+                url_pattern = r'https?://[^\s<>"\'\)]+?\.(?:pdf|docx|xlsx|pptx|doc|xls|ppt|txt|rtf)(?:\?[^\s<>"\'\)]*)?'
                 plain_urls = re.findall(url_pattern, description_text, flags=re.IGNORECASE)
 
                 for url in plain_urls:
@@ -1873,7 +1871,8 @@ class ArchivedTaskDetailsWindow(QDialog):
         else:
             self.document_info_label.setText("Документи відсутні")
             self.download_button.setEnabled(False)
-            self.download_share_button.setEnabled(False)
+            # Keep share button enabled - can share task info without documents
+            self.download_share_button.setEnabled(True)
 
         # Calculate and display overdue information
         self.calculate_overdue_info()
@@ -1904,14 +1903,14 @@ class ArchivedTaskDetailsWindow(QDialog):
         # Define document download patterns to remove (after fixing links)
         document_patterns = [
             # Direct document file URLs
-            r'https?://[^\s<>"\'\)]+\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:\?[^\s<>"\'\)]*)?',
+            r'https?://[^\s<>"\'\)]+?\.(?:pdf|docx|xlsx|pptx|doc|xls|ppt|txt|rtf)(?:\?[^\s<>"\'\)]*)?',
             # Common document hosting services
             r'https?://(?:drive\.google\.com/file/d/[^\s<>"\'\)]+/view)',
             r'https?://(?:docs\.google\.com/document/d/[^\s<>"\'\)]+)',
             r'https?://(?:dropbox\.com/s/[^\s<>"\'\)]+)',
             r'https?://(?:onedrive\.live\.com/[^\s<>"\'\)]+)',
             # Calendar file download patterns
-            r'https?://(?:calendar\.nupp\.edu\.ua)/[^\s<>"\'\)]*\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx)',
+            r'https?://(?:calendar\.nupp\.edu\.ua)/[^\s<>"\'\)]*?\.(?:pdf|docx|xlsx|pptx|doc|xls|ppt)',
             # File download indicators
             r'\[Завантажити файл\]|\[Download file\]',
             r'\[Прикріплений файл\]|\[Attached file\]',
@@ -2139,20 +2138,17 @@ class ArchivedTaskDetailsWindow(QDialog):
                 f"Не вдалося відновити завдання: {message}"
             )
 
-    def generate_share_message(self, task_name, order_info, filename):
+    def generate_share_message(self, task_name, order_info, filename, documents=None, messenger_type="telegram"):
         """Generate a shareable message for messaging apps like Viber/Telegram"""
+        import urllib.parse
         task_data = self.task_data
         archive_data = self.archive_data
 
         # Extract task information
         dates = task_data.get('dates', '')
-        percentage = task_data.get('percentage', 0)
         description = task_data.get('task_description', '')
         task_id = task_data.get('task_id', '')
         archived_date = archive_data.get('archived_date', '')
-
-        # For archived tasks, always show as completed or include archive info
-        status = "✅ Завершено (в архіві)"
 
         # Clean description
         clean_desc = description.replace('<br>', '\n').replace('<br/>', '\n').replace('&nbsp;', ' ') if description else ''
@@ -2163,51 +2159,90 @@ class ArchivedTaskDetailsWindow(QDialog):
         if ' - ' in dates:
             start_date, end_date = dates.split(' - ', 1)
 
-        # Create the calendar link
+        # Create the calendar link (not used in current format but kept for reference)
         link = f"https://calendar.nupp.edu.ua/index.php?task={task_id}" if task_id else ""
 
-        # Build share message
-        message_parts = []
-        message_parts.append(f"📋 {task_name}")
-        message_parts.append(f"")
-        message_parts.append(f"📅 Терміни виконання: {dates}")
-        message_parts.append(f"📊 Статус: {status}")
-        message_parts.append(f"📁 Дата архівації: {archived_date[:10] if archived_date else 'Невідомо'}")
+        if messenger_type == "viber":
+            # Viber: Minimal format, no emoji, compact
+            message_parts = []
+            message_parts.append(task_name)
+            message_parts.append(f"Терміни: {dates}")
+            message_parts.append(f"Архівовано: {archived_date[:10] if archived_date else 'Невідомо'}")
 
-        # Add order info if available
-        if order_info:
-            message_parts.append(f"📄 {order_info}")
+            if order_info:
+                message_parts.append(f"{order_info}")
 
-        # Add description if available
-        if clean_desc:
-            # Limit description length
-            if len(clean_desc) > 200:
-                clean_desc = clean_desc[:200] + "..."
-            message_parts.append(f"📝 Опис: {clean_desc}")
+            # Calculate available space for description
+            base_url_length = 22  # "viber://forward?text="
+            max_url_length = 2000
+            available_length = max_url_length - base_url_length
 
-        # Add link
-        if link:
+            # Build message without description first
+            temp_message = "\n".join(message_parts)
+            estimated_encoded_overhead = len(urllib.parse.quote(temp_message))
+            remaining_space = available_length - estimated_encoded_overhead
+
+            if clean_desc:
+                # Truncate description to fit within URL limit
+                safe_desc_length = max(0, remaining_space // 3)
+                if len(clean_desc) > safe_desc_length:
+                    clean_desc = clean_desc[:safe_desc_length]
+                    last_space = clean_desc.rfind(' ')
+                    if last_space > safe_desc_length // 2:
+                        clean_desc = clean_desc[:last_space]
+                message_parts.append(clean_desc)
+
+            # Link removed as requested
+
+            if documents:
+                message_parts.append(f"Документи: {filename}")
+
+        else:
+            # Telegram: Full format with emoji
+            message_parts = []
+            message_parts.append(f"📋 {task_name}")
             message_parts.append(f"")
-            message_parts.append(f"🔗 Посилання: {link}")
+            message_parts.append(f"📅 Терміни виконання: {dates}")
+            # Status removed as requested
+            message_parts.append(f"📁 Дата архівації: {archived_date[:10] if archived_date else 'Невідомо'}")
 
-        # Add footer
-        message_parts.append("")
-        message_parts.append("---")
-        message_parts.append(f"📎 Документи: {filename}")
+            # Add order info if available
+            if order_info:
+                message_parts.append(f"📄 {order_info}")
+
+            # Add description if available
+            if clean_desc:
+                # Longer limit for Telegram
+                if len(clean_desc) > 1000:
+                    clean_desc = clean_desc[:1000]
+                    last_space = clean_desc.rfind(' ')
+                    if last_space > 900:
+                        clean_desc = clean_desc[:last_space]
+                    clean_desc += "..."
+                message_parts.append(f"📝 Опис: {clean_desc}")
+
+            # Link removed as requested
+
+            # Add footer with document info (or without if no documents)
+            message_parts.append("")
+            message_parts.append("---")
+            if documents:
+                message_parts.append(f"📎 Документи: {filename}")
+            else:
+                message_parts.append("📎 Документи: Відсутні")
 
         return "\n".join(message_parts)
 
     def download_and_share_action(self):
         """Handle download and share button click for ArchivedTaskDetailsWindow"""
         documents = self.task_data.get('documents', [])
-        if not documents:
-            QMessageBox.information(self, "Немає документів", "Для цього завдання немає доступних документів")
-            return
 
-        # Use the existing download_documents method
-        self.download_documents()
+        # Download documents if available
+        if documents:
+            # Use the existing download_documents method
+            self.download_documents()
 
-        # After download, show share message dialog
+        # After download (or directly if no documents), show share message dialog
         task_name = self.task_data.get('task_name', 'Завдання')
         task_description = self.task_data.get('task_description', '')
         order_info = self.extract_order_info(task_name)
@@ -2220,7 +2255,7 @@ class ArchivedTaskDetailsWindow(QDialog):
             filename = f"[АРХІВ] {task_name}.pdf"
 
         self.show_share_message_dialog_with_download(task_name, order_info, filename,
-                                                   self.generate_share_message(task_name, order_info, filename),
+                                                   self.generate_share_message(task_name, order_info, filename, documents),
                                                    documents)
 
     def show_share_message_dialog_with_download(self, task_name, order_info, filename, message, documents):
@@ -2290,12 +2325,21 @@ class ArchivedTaskDetailsWindow(QDialog):
         layout.addLayout(button_layout)
 
         # Instructions
-        instructions = QLabel(
-            "💡 **Інструкції:**\n"
-            "• Натисніть кнопку месенджера для автоматичного відкриття та вставки повідомлення\n"
-            "• Файли будуть додані до повідомлення автоматично\n"
-            "• Або скопіюйте текст вручну для вставки в будь-який додаток"
-        )
+        if documents:
+            instructions_text = (
+                "💡 **Інструкції:**\n"
+                "• Натисніть кнопку месенджера для автоматичного відкриття та вставки повідомлення\n"
+                "• Файли будуть додані до повідомлення автоматично\n"
+                "• Або скопіюйте текст вручну для вставки в будь-який додаток"
+            )
+        else:
+            instructions_text = (
+                "💡 **Інструкції:**\n"
+                "• Натисніть кнопку месенджера для автоматичного відкриття та вставки повідомлення\n"
+                "• Документи відсутні - лише текст повідомлення\n"
+                "• Або скопіюйте текст вручну для вставки в будь-який додаток"
+            )
+        instructions = QLabel(instructions_text)
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
 
@@ -2309,38 +2353,64 @@ class ArchivedTaskDetailsWindow(QDialog):
         from PyQt6.QtWidgets import QMessageBox
         from PyQt6.QtGui import QGuiApplication
 
-        # URL-encode the message for use in the URL
-        encoded_message = urllib.parse.quote(message)
-
         # Get the download directory
         download_dir = os.path.expanduser("~/Downloads")
 
-        # Prepare file path
-        file_path = os.path.join(download_dir, filename)
+        # Prepare file path (only if there are documents)
+        file_path = os.path.join(download_dir, filename) if documents else None
+
+        # Regenerate message with appropriate format for this messenger
+        task_name = self.task_data.get('task_name', 'Завдання')
+        order_info = self.extract_order_info(task_name)
+        if not order_info:
+            task_description = self.task_data.get('task_description', '')
+            order_info = self.extract_order_info(task_description)
+
+        # Generate messenger-specific message
+        messenger_message = self.generate_share_message(task_name, order_info, filename, messenger_type=messenger)
 
         if messenger == "viber":
+            # Viber: Copy only message text (no file path - user attaches manually)
+            QGuiApplication.clipboard().setText(messenger_message)
+
             # Use viber://forward to share text
+            encoded_message = urllib.parse.quote(messenger_message)
             viber_url = f"viber://forward?text={encoded_message}"
             try:
                 webbrowser.open(viber_url)
-                QMessageBox.information(self, "✅ Viber відкрито",
-                                              "Viber відкрито з попередньо заповненим повідомленням!\n\n"
-                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
-                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
-                QGuiApplication.clipboard().setText(file_path)
+                if documents and file_path:
+                    QMessageBox.information(self, "Viber вiдкрито",
+                                                  f"Повiдомлення скопiйовано.\n\n"
+                                                  f"Файл: {file_path}\n\n"
+                                                  "Вставте (Ctrl+V) текст, потiм додайте файл вручну.")
+                else:
+                    QMessageBox.information(self, "Viber вiдкрито",
+                                                  "Повiдомлення скопiйовано.\n\n"
+                                                  "Вставте (Ctrl+V) текст у чат.")
             except Exception as e:
                 QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Viber: {e}")
 
         elif messenger == "telegram":
+            # Telegram: Copy full message with file path
+            clipboard_text = messenger_message
+            if documents and file_path:
+                clipboard_text = f"{messenger_message}\n\n📁 Файл: {file_path}"
+            QGuiApplication.clipboard().setText(clipboard_text)
+
             # Use tg://msg to share text
+            encoded_message = urllib.parse.quote(messenger_message)
             telegram_url = f"tg://msg?text={encoded_message}"
             try:
                 webbrowser.open(telegram_url)
-                QMessageBox.information(self, "✅ Telegram відкрито",
-                                              "Telegram відкрито з попередньо заповненим повідомленням!\n\n"
-                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
-                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
-                QGuiApplication.clipboard().setText(file_path)
+                if documents and file_path:
+                    QMessageBox.information(self, "Telegram відкрито",
+                                                  f"Повне повідомлення скопійовано.\n\n"
+                                                  f"Файл: {file_path}\n\n"
+                                                  "Вставте (Ctrl+V) для повного повідомлення з файлом.")
+                else:
+                    QMessageBox.information(self, "Telegram відкрито",
+                                                  "Повне повідомлення скопійовано.\n\n"
+                                                  "Вставте (Ctrl+V) текст у чат.")
             except Exception as e:
                 QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Telegram: {e}")
 
@@ -2588,14 +2658,14 @@ class TaskDetailsWindow(QDialog):
         # Define document download patterns to remove (after fixing links)
         document_patterns = [
             # Direct document file URLs
-            r'https?://[^\s<>"\'\)]+\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:\?[^\s<>"\'\)]*)?',
+            r'https?://[^\s<>"\'\)]+?\.(?:pdf|docx|xlsx|pptx|doc|xls|ppt|txt|rtf)(?:\?[^\s<>"\'\)]*)?',
             # Common document hosting services
             r'https?://(?:drive\.google\.com/file/d/[^\s<>"\'\)]+/view)',
             r'https?://(?:docs\.google\.com/document/d/[^\s<>"\'\)]+)',
             r'https?://(?:dropbox\.com/s/[^\s<>"\'\)]+)',
             r'https?://(?:onedrive\.live\.com/[^\s<>"\'\)]+)',
             # Calendar file download patterns
-            r'https?://(?:calendar\.nupp\.edu\.ua)/[^\s<>"\'\)]*\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx)',
+            r'https?://(?:calendar\.nupp\.edu\.ua)/[^\s<>"\'\)]*?\.(?:pdf|docx|xlsx|pptx|doc|xls|ppt)',
             # File download indicators
             r'\[Завантажити файл\]|\[Download file\]',
             r'\[Прикріплений файл\]|\[Attached file\]',
@@ -2663,7 +2733,8 @@ class TaskDetailsWindow(QDialog):
             # Hide download button and show no document message
             self.document_label.setText("Документи відсутні")
             self.download_button.setEnabled(False)
-            self.download_share_button.setEnabled(False)
+            # Keep share button enabled - can share task info without documents
+            self.download_share_button.setEnabled(True)
 
         # Update percentage
         percentage = self.task_data.get('percentage', 0)
@@ -2740,20 +2811,13 @@ class TaskDetailsWindow(QDialog):
             self.due_status_label.setText("Error parsing dates")
             self.time_remaining_label.setText("")
 
-    def generate_share_message(self, task_name, order_info, filename):
+    def generate_share_message(self, task_name, order_info, filename, messenger_type="telegram"):
         """Generate a shareable message for messaging apps like Viber/Telegram"""
+        import urllib.parse
         task_data = self.task_data
 
         # Extract task information
         dates = task_data.get('dates', '')
-        percentage = task_data.get('percentage', 0)
-
-        # Use corrected status - if task is 100% complete, show as completed
-        if percentage == 100:
-            status = "✅ Завершено"
-        else:
-            status = task_data.get('status', '')
-
         description = task_data.get('task_description', '')
         task_id = task_data.get('task_id', '')
 
@@ -2766,29 +2830,68 @@ class TaskDetailsWindow(QDialog):
         if ' - ' in dates:
             start_date, end_date = dates.split(' - ', 1)
 
-        # Create the calendar link
+        # Create the calendar link (not used in current format but kept for reference)
         link = f"https://calendar.nupp.edu.ua/index.php?task={task_id}" if task_id else ""
 
-        # Create the message using the new template
-        message_lines = []
-        message_lines.append(f"📋 **{task_name}**")
-        message_lines.append("")
-        message_lines.append(f"📅 **Терміни:** {start_date} — {end_date}")
-        message_lines.append(f"🔄 **Статус:** {status}")
-        message_lines.append("")
-        message_lines.append("ℹ️ **Деталі:**")
+        if messenger_type == "viber":
+            # Viber: Minimal format, no emoji, compact for URL encoding
+            message_lines = []
+            message_lines.append(task_name)
+            message_lines.append(f"Терміни: {start_date} - {end_date}")
+            # Status removed as requested
 
-        if order_info:
-            message_lines.append(f"Відповідно до: {order_info}")
+            if order_info:
+                message_lines.append(f"{order_info}")
 
-        if clean_desc:
-            # Limit description length for readability
-            if len(clean_desc) > 300:
-                clean_desc = clean_desc[:300] + "..."
-            message_lines.append(clean_desc)
+            # Calculate available space for description
+            # Base URL: "viber://forward?text=" = 22 chars
+            # URL encoding expands special chars by ~3x
+            base_url_length = 22
+            max_url_length = 2000  # Browser URL limit
+            available_length = max_url_length - base_url_length
 
-        message_lines.append("")
-        message_lines.append(f"📎 **Посилання:** {link}")
+            # Build message without description first to calculate overhead
+            temp_message = "\n".join(message_lines)
+            # Estimate encoded length (Ukrilian chars encode to multiple bytes)
+            estimated_encoded_overhead = len(urllib.parse.quote(temp_message))
+
+            # Calculate remaining space for description
+            remaining_space = available_length - estimated_encoded_overhead
+
+            if clean_desc:
+                # Truncate description to fit within URL limit
+                # Be conservative: use 1/3 of remaining space as safe limit for UTF-8 text
+                safe_desc_length = max(0, remaining_space // 3)
+                if len(clean_desc) > safe_desc_length:
+                    clean_desc = clean_desc[:safe_desc_length]
+                    last_space = clean_desc.rfind(' ')
+                    if last_space > safe_desc_length // 2:
+                        clean_desc = clean_desc[:last_space]
+                message_lines.append(clean_desc)
+            # Link removed as requested
+        else:
+            # Telegram: Full format with emoji
+            message_lines = []
+            message_lines.append(f"📋 {task_name}")
+            message_lines.append("")
+            message_lines.append(f"📅 Терміни: {start_date} — {end_date}")
+            # Status removed as requested
+            message_lines.append("")
+            message_lines.append("ℹ️ Деталі:")
+
+            if order_info:
+                message_lines.append(f"Відповідно до: {order_info}")
+
+            if clean_desc:
+                # Longer limit for Telegram
+                if len(clean_desc) > 1000:
+                    clean_desc = clean_desc[:1000]
+                    last_space = clean_desc.rfind(' ')
+                    if last_space > 900:
+                        clean_desc = clean_desc[:last_space]
+                    clean_desc += "..."
+                message_lines.append(clean_desc)
+            # Link removed as requested
 
         return "\n".join(message_lines)
 
@@ -3014,12 +3117,21 @@ class TaskDetailsWindow(QDialog):
         layout.addLayout(button_layout)
 
         # Instructions
-        instructions = QLabel(
-            "💡 **Інструкції:**\n"
-            "• Натисніть кнопку месенджера для автоматичного відкриття та вставки повідомлення\n"
-            "• Файли будуть додані до повідомлення автоматично\n"
-            "• Або скопіюйте текст вручну для вставки в будь-який додаток"
-        )
+        if documents:
+            instructions_text = (
+                "💡 **Інструкції:**\n"
+                "• Натисніть кнопку месенджера для автоматичного відкриття та вставки повідомлення\n"
+                "• Файли будуть додані до повідомлення автоматично\n"
+                "• Або скопіюйте текст вручну для вставки в будь-який додаток"
+            )
+        else:
+            instructions_text = (
+                "💡 **Інструкції:**\n"
+                "• Натисніть кнопку месенджера для автоматичного відкриття та вставки повідомлення\n"
+                "• Документи відсутні - лише текст повідомлення\n"
+                "• Або скопіюйте текст вручну для вставки в будь-який додаток"
+            )
+        instructions = QLabel(instructions_text)
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
 
@@ -3033,38 +3145,64 @@ class TaskDetailsWindow(QDialog):
         from PyQt6.QtWidgets import QMessageBox
         from PyQt6.QtGui import QGuiApplication
 
-        # URL-encode the message for use in the URL
-        encoded_message = urllib.parse.quote(message)
-
         # Get the download directory
         download_dir = os.path.expanduser("~/Downloads")
 
-        # Prepare file path
-        file_path = os.path.join(download_dir, filename)
+        # Prepare file path (only if there are documents)
+        file_path = os.path.join(download_dir, filename) if documents else None
+
+        # Regenerate message with appropriate format for this messenger
+        task_name = self.task_data.get('task_name', 'Завдання')
+        order_info = self.extract_order_info(task_name)
+        if not order_info:
+            task_description = self.task_data.get('task_description', '')
+            order_info = self.extract_order_info(task_description)
+
+        # Generate messenger-specific message
+        messenger_message = self.generate_share_message(task_name, order_info, filename, messenger_type=messenger)
 
         if messenger == "viber":
+            # Viber: Copy only message text (no file path - user attaches manually)
+            QGuiApplication.clipboard().setText(messenger_message)
+
             # Use viber://forward to share text
+            encoded_message = urllib.parse.quote(messenger_message)
             viber_url = f"viber://forward?text={encoded_message}"
             try:
                 webbrowser.open(viber_url)
-                QMessageBox.information(self, "✅ Viber відкрито",
-                                              "Viber відкрито з попередньо заповненим повідомленням!\n\n"
-                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
-                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
-                QGuiApplication.clipboard().setText(file_path)
+                if documents and file_path:
+                    QMessageBox.information(self, "Viber вiдкрито",
+                                                  f"Повiдомлення скопiйовано.\n\n"
+                                                  f"Файл: {file_path}\n\n"
+                                                  "Вставте (Ctrl+V) текст, потiм додайте файл вручну.")
+                else:
+                    QMessageBox.information(self, "Viber вiдкрито",
+                                                  "Повiдомлення скопiйовано.\n\n"
+                                                  "Вставте (Ctrl+V) текст у чат.")
             except Exception as e:
                 QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Viber: {e}")
 
         elif messenger == "telegram":
+            # Telegram: Copy full message with file path
+            clipboard_text = messenger_message
+            if documents and file_path:
+                clipboard_text = f"{messenger_message}\n\n📁 Файл: {file_path}"
+            QGuiApplication.clipboard().setText(clipboard_text)
+
             # Use tg://msg to share text
+            encoded_message = urllib.parse.quote(messenger_message)
             telegram_url = f"tg://msg?text={encoded_message}"
             try:
                 webbrowser.open(telegram_url)
-                QMessageBox.information(self, "✅ Telegram відкрито",
-                                              "Telegram відкрито з попередньо заповненим повідомленням!\n\n"
-                                              f"Шлях до файлу скопійовано в буфер обміну:\n{file_path}\n\n"
-                                              "💡 Вставте шлях до файлу в чат, щоб надіслати його.")
-                QGuiApplication.clipboard().setText(file_path)
+                if documents and file_path:
+                    QMessageBox.information(self, "Telegram відкрито",
+                                                  f"Повне повідомлення скопійовано.\n\n"
+                                                  f"Файл: {file_path}\n\n"
+                                                  "Вставте (Ctrl+V) для повного повідомлення з файлом.")
+                else:
+                    QMessageBox.information(self, "Telegram відкрито",
+                                                  "Повне повідомлення скопійовано.\n\n"
+                                                  "Вставте (Ctrl+V) текст у чат.")
             except Exception as e:
                 QMessageBox.warning(self, "Помилка", f"Не вдалося відкрити Telegram: {e}")
 
@@ -3247,14 +3385,13 @@ class TaskDetailsWindow(QDialog):
     def download_and_share_action(self):
         """Handle download and share button click for TaskDetailsWindow"""
         documents = self.task_data.get('documents', [])
-        if not documents:
-            QMessageBox.information(self, "Немає документів", "Для цього завдання немає доступних документів")
-            return
 
-        # Use the existing download_documents method
-        self.download_documents()
+        # Download documents if available
+        if documents:
+            # Use the existing download_documents method
+            self.download_documents()
 
-        # After download, show share message dialog
+        # After download (or directly if no documents), show share message dialog
         task_name = self.task_data.get('task_name', 'Завдання')
         task_description = self.task_data.get('task_description', '')
         order_info = self.extract_order_info(task_name)
