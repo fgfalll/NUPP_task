@@ -87,22 +87,33 @@ class PasswordRestoreManager:
 
     # Admin file verification
     def verify_admin_file(self, filepath):
-        """Verify admin override file"""
+        """Verify admin override file using stored hash"""
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
 
-            # SIMPLE HARDCODED ADMIN KEY (change before production!)
-            admin_key = "Taras2025"
+            # Get the stored hash from the file
+            stored_hash = data.get("admin_key_hash")
+            if not stored_hash:
+                return False
 
+            # Default admin key - change this before production!
+            default_admin_key = "Taras2025"
+            expected_hash = hashlib.sha256(default_admin_key.encode()).hexdigest()
+
+            # Verify the hash matches the expected admin key
+            if stored_hash != expected_hash:
+                return False
+
+            # Additional signature verification
             timestamp = data.get("timestamp", "")
             app_id = data.get("app_id", "")
             signature = data.get("signature", "")
 
             # Recreate signature data
-            signature_data = f"{admin_key}:{timestamp}:{app_id}"
+            signature_data = f"{default_admin_key}:{timestamp}:{app_id}"
             expected_signature = hmac.new(
-                admin_key.encode(),
+                default_admin_key.encode(),
                 signature_data.encode(),
                 hashlib.sha256
             ).hexdigest()

@@ -28,17 +28,33 @@ def main():
         sys.exit(1)
 
     print("Інсталяція TaskMonitor виявлено.")
-    print("Генерація адміністративного ключа...")
     print()
-    print("ПОПЕРЕДЖЕННЯ: Використовуйте цей ключ лише для адміністративних цілей!")
+    print("ПОПЕРЕДЖЕННЯ: Адміністративний ключ дозволяє відновити доступ")
+    print("без знання поточного пароля. Використовуйте обережно!")
     print()
 
-    # Generate admin key file with hardcoded admin key
+    # Prompt for admin key
+    while True:
+        admin_key = input("Введіть адміністративний ключ: ").strip()
+        if len(admin_key) >= 4:
+            break
+        print("Помилка: Ключ повинен містити щонайменше 4 символи.")
+
+    # Confirm admin key
+    admin_key_confirm = input("Підтвердьте адміністративний ключ: ").strip()
+    if admin_key != admin_key_confirm:
+        print("\nПомилка: Ключі не співпадають!")
+        input("\nНатисніть Enter для виходу...")
+        sys.exit(1)
+
+    print("\nГенерація адміністративного файлу...")
+
+    # Generate admin key file with user-provided admin key
     timestamp = datetime.now().isoformat()
     app_id = "TaskMonitor"
 
-    # SIMPLE HARDCODED ADMIN KEY (change before production!)
-    admin_key = "Taras2025"
+    # Hash the admin key for storage (security - never store raw key)
+    admin_key_hash = hashlib.sha256(admin_key.encode()).hexdigest()
 
     # Create signature using the admin key as the secret
     signature_data = f"{admin_key}:{timestamp}:{app_id}"
@@ -47,6 +63,7 @@ def main():
     # File content
     file_content = {
         "signature": signature,
+        "admin_key_hash": admin_key_hash,
         "timestamp": timestamp,
         "app_id": app_id
     }
